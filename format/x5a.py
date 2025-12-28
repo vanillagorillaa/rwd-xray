@@ -1,17 +1,17 @@
 import struct
-from base import Base
-from header import Header
-from header_value import HeaderValue
+from .base import Base
+from .header import Header
+from .header_value import HeaderValue
 
 class x5a(Base):
     def __init__(self, data):
         start_idx = 3 # skip file type indicator bytes
         headers, header_data_len = self._parse_file_headers(data[start_idx:])
         keys = self._get_keys(headers)
-        
+
         start_idx += header_data_len
         addr_blocks, encrypted = self._get_firmware(data[start_idx:-4]) # exclude file checksum
-        
+
         Base.__init__(self, data, headers, keys, addr_blocks, encrypted)
 
     def _parse_file_headers(self, data):
@@ -19,19 +19,19 @@ class x5a(Base):
         d_idx = 0
 
         for h_idx in range(6):
-            h_prefix = data[d_idx]
+            h_prefix = data[d_idx:d_idx+1]
             d_idx += 1
 
             # first byte is number of values
-            cnt = ord(h_prefix)
+            cnt = h_prefix[0]
 
             f_header = Header(h_idx, h_prefix, "")
             for v_idx in range(cnt):
-                v_prefix = data[d_idx]
+                v_prefix = data[d_idx:d_idx+1]
                 d_idx += 1
 
                 # first byte is length of value
-                length = ord(v_prefix)
+                length = v_prefix[0]
                 v_data = data[d_idx:d_idx+length]
                 d_idx += length
 
@@ -52,9 +52,36 @@ class x5a(Base):
         raise Exception("could not find encryption key header!")
 
     def _get_firmware(self, data):
+        data = data.rstrip(b"\x78\x00\xff")
+        n = len(data)
+
         start = struct.unpack('!I', data[0:4])[0]
         length = struct.unpack('!I', data[4:8])[0]
-
         firmware = data[8:]
-        assert len(firmware) == length, "firmware length incorrect!"
+        if len(firmware) == length:
+            return [{"start": start, "length": length}], [firmware]
+
+        best = None  # (length, off, start, firmware)
+
+        limit = min(n - 8, 0x40000)
+        for off in range(0, limit):
+            start = struct.unpack('!I', data[off:off+4])[0]
+            length = struct.unpack('!I', data[off+4:off+8])[0]
+
+            if length <= 0 or length > n:
+                continue
+            if off + 8 + length > n:
+                continue
+
+            firmware = data[off+8:off+8+length]
+            if len(firmware) != length:
+                continue
+
+            if best is None or length > best[0]:
+                best = (length, off, start, firmware)
+
+        if best is None:
+            raise AssertionError("firmware length incorrect!")
+
+        length, off, start, firmware = best
         return [{"start": start, "length": length}], [firmware]

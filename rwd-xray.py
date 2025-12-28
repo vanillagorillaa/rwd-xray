@@ -1,16 +1,16 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python3
 import os
 import sys
-import struct
 import gzip
 import binascii
-import operator
-import itertools
 import importlib
 
 def get_checksum(data):
+    if isinstance(data, (bytes, bytearray)):
+        result = -sum(data)
+        return result & 0xFF
     result = -sum(map(ord, data))
-    return chr(result & 0xFF)
+    return result & 0xFF
 
 def write_firmware(data, file_name):
     with open(file_name, 'wb') as o:
@@ -19,7 +19,6 @@ def write_firmware(data, file_name):
 
 def read_file(fn):
     f_name, f_ext = os.path.splitext(fn)
-    f_base = os.path.basename(f_name)
     open_fn = open
     if f_ext == ".gz":
         open_fn = gzip.open
@@ -27,13 +26,13 @@ def read_file(fn):
 
     with open_fn(fn, 'rb') as f:
         f_data = f.read()
-    
+
     return f_data
 
 def get_part_number_prefix(fn, short=False):
     f_name, f_ext = os.path.splitext(fn)
     f_base = os.path.basename(f_name)
-    part_num = f_base.replace('-','').replace('_', '')
+    part_num = f_base.replace('-', '').replace('_', '')
     prefix = part_num[0:5] + '-' + part_num[5:8]
     if not short:
         prefix += '-' + part_num[8:12]
@@ -44,7 +43,7 @@ def main():
     f_dir = os.path.dirname(f_name)
     f_base = os.path.basename(f_name).split('.')[0]
     f_raw = read_file(f_name)
-    f_type = "x" + binascii.b2a_hex(f_raw[0])
+    f_type = "x" + binascii.b2a_hex(f_raw[0:1]).decode("ascii")
     f_module = importlib.import_module("format.{}".format(f_type))
     f_class = getattr(f_module, f_type)
     fw = f_class(f_raw)
@@ -57,12 +56,12 @@ def main():
             fenc.write(fe)
 
     # attempt to decrypt firmware (validate by searching for part number in decrypted bytes)
-    part_number_prefix = get_part_number_prefix(f_name)
+    part_number_prefix = get_part_number_prefix(f_name).encode('ascii')
     firmware_candidates = fw.decrypt(part_number_prefix)
     if len(firmware_candidates) == 0:
         # try with a shorter part number
         print('failed on long part number, trying truncated part number ...')
-        part_number_prefix = get_part_number_prefix(f_name, short=True)
+        part_number_prefix = get_part_number_prefix(f_name, short=True).encode('ascii')
         firmware_candidates = fw.decrypt(part_number_prefix)
 
     if len(firmware_candidates) == 0:
@@ -84,25 +83,28 @@ def main():
 
     firmware_good = list()
     idx = 0
+    base_start = min([b["start"] for b in fw.firmware_blocks]) if fw.firmware_blocks else 0
     for fc in firmware_candidates:
-        # concat all address blocks to allow checksum validation using memory addresses
-        firmware = ''
-        for block in xrange(len(fc)):
-            start = fw.firmware_blocks[block]["start"]
-            # fill gaps with \x00
-            if len(firmware) < start:
-                firmware += '\x00' * (start-len(firmware))
-            firmware += fc[block]
+        firmware = b''
 
-        # validate known checksums
+        for block in range(len(fc)):
+            start = fw.firmware_blocks[block]["start"]
+            offset = start - base_start
+
+            if len(firmware) < offset:
+                firmware += b'\x00' * (offset - len(firmware))
+
+            chunk = fc[block].encode('latin1') if isinstance(fc[block], str) else fc[block]
+            firmware += chunk
+
         if f_base in checksums.keys():
             print("firmware[{}] checksums:".format(idx))
             match = True
             for start, end in checksums[f_base]:
-                sum = ord(get_checksum(firmware[start:end]))
-                chk = ord(firmware[end])
-                print("{} {} {}".format(hex(chk), "=" if chk == sum else "!=", hex(sum)))
-                if sum != chk:
+                s = get_checksum(firmware[start:end])
+                chk = firmware[end]
+                print("{} {} {}".format(hex(chk), "=" if chk == s else "!=", hex(s)))
+                if s != chk:
                     match = False
             if match:
                 print("checksums good!")
@@ -110,23 +112,15 @@ def main():
             else:
                 print("checksums bad!")
         else:
-            # no checksums so assume good
             firmware_good.append(firmware)
-        
+
         idx += 1
 
-    # sometimes more than one set of keys will result in the part number being found
-    # hopefully the checksums narrowed it down to a single candidate
-    if len(firmware_good) > 1:
-        print("which firmware file is correct?  who knows!")
-
     idx = 1
-    # write out decrypted firmware files
     for f_data in firmware_good:
-        start_addr = fw.firmware_blocks[0]["start"]
-        f_addr = hex(start_addr)
-        f_out = os.path.join(f_dir, f_base + '.' + f_addr + '.bin')
-        write_firmware(f_data[start_addr:], f_out)
+        f_addr = hex(base_start)
+        f_out = os.path.join(f_dir, f_base + '.' + str(idx) + '.' + f_addr + '.bin')
+        write_firmware(f_data, f_out)
         idx += 1
 
 if __name__== "__main__":
