@@ -22,12 +22,9 @@ def read_file(fn):
     open_fn = open
     if f_ext == ".gz":
         open_fn = gzip.open
-        f_name, f_ext = os.path.splitext(f_name)
 
     with open_fn(fn, 'rb') as f:
-        f_data = f.read()
-
-    return f_data
+        return f.read()
 
 def get_part_number_prefix(fn, short=False):
     f_name, f_ext = os.path.splitext(fn)
@@ -85,12 +82,13 @@ def main():
     idx = 0
     base_start = min([b["start"] for b in fw.firmware_blocks]) if fw.firmware_blocks else 0
     for fc in firmware_candidates:
+        # concat all address blocks to allow checksum validation using memory addresses
         firmware = b''
 
         for block in range(len(fc)):
             start = fw.firmware_blocks[block]["start"]
             offset = start - base_start
-
+            # fill gaps with \x00
             if len(firmware) < offset:
                 firmware += b'\x00' * (offset - len(firmware))
 
@@ -101,10 +99,10 @@ def main():
             print("firmware[{}] checksums:".format(idx))
             match = True
             for start, end in checksums[f_base]:
-                s = get_checksum(firmware[start:end])
+                sum = get_checksum(firmware[start:end])
                 chk = firmware[end]
-                print("{} {} {}".format(hex(chk), "=" if chk == s else "!=", hex(s)))
-                if s != chk:
+                print("{} {} {}".format(hex(chk), "=" if chk == sum else "!=", hex(sum)))
+                if sum != chk:
                     match = False
             if match:
                 print("checksums good!")
@@ -112,11 +110,18 @@ def main():
             else:
                 print("checksums bad!")
         else:
+            # no checksums so assume good
             firmware_good.append(firmware)
 
         idx += 1
 
+    # sometimes more than one set of keys will result in the part number being found
+    # hopefully the checksums narrowed it down to a single candidate
+    if len(firmware_good) > 1:
+        print("which firmware file is correct?  who knows!")
+
     idx = 1
+    # write out decrypted firmware files
     for f_data in firmware_good:
         f_addr = hex(base_start)
         f_out = os.path.join(f_dir, f_base + '.' + str(idx) + '.' + f_addr + '.bin')

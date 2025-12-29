@@ -43,8 +43,11 @@ class Base(object):
         return self._keys
 
     def calc_checksum(self, data):
+        if isinstance(data, (bytes, bytearray)):
+            result = -sum(data)
+            return result & 0xFF
         result = -sum(map(ord, data))
-        return chr(result & 0xFF)
+        return result & 0xFF
 
     def validate_file_checksum(self, data):
         calculated = sum(data[0:-4]) & 0xFFFFFFFF
@@ -59,7 +62,9 @@ class Base(object):
             decoder[chr(e)] = chr(d)
             values.add(d)
 
-        return decoder if len(values) == 256 else None
+        if len(values) != 256:
+            return None
+        return decoder
 
     def decrypt(self, search_value):
         if isinstance(search_value, (bytes, bytearray)):
@@ -69,10 +74,10 @@ class Base(object):
         print(search_value)
         print(search_value_padded)
 
-        search_exact = re.compile('.*' + re.escape(search_value) + '.*', flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+        search_exact = re.compile('.*' + re.escape(search_value)+'.*', flags=re.IGNORECASE|re.MULTILINE|re.DOTALL)
         # sometimes there is an extra character after each character
         # 37805-RBB-J530 -> 3377880550--RRBCBA--JA503000
-        search_padded = re.compile('.*' + re.escape(search_value_padded) + '.*', flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+        search_padded = re.compile('.*' + re.escape(search_value_padded)+'.*', flags=re.IGNORECASE|re.MULTILINE|re.DOTALL)
         operators = [
             { 'fn': operator.__xor__, 'sym': '^' },
             { 'fn': operator.__and__, 'sym': '&' },
@@ -126,12 +131,10 @@ class Base(object):
             print("cipher: {}".format(cipher))
         return firmware_candidates
 
-
     def __str__(self):
-        info = [
-            "file format: {}".format(self.file_format),
-            "file checksum: {}".format(hex(self.file_checksum)),
-        ]
+        info = list()
+        info.append("file format: {}".format(self._file_format))
+        info.append("file checksum: {}".format(hex(self._file_checksum)))
         info.append("headers:")
         info.extend([str(h) for h in self._file_headers])
         info.append("keys:")

@@ -48,29 +48,18 @@ class x5a(Base):
                 assert len(header.values) == 1, "encryption key header does not have exactly one value!"
                 assert len(header.values[0].value) == 3, "encryption key header not three bytes!"
                 return header.values[0].value
-
-        raise Exception("could not find encryption key header!")
+        raise AssertionError("could not locate encryption keys in headers")
 
     def _get_firmware(self, data):
-        data = data.rstrip(b"\x78\x00\xff")
-        n = len(data)
-
-        start = struct.unpack('!I', data[0:4])[0]
-        length = struct.unpack('!I', data[4:8])[0]
-        firmware = data[8:]
-        if len(firmware) == length:
-            return [{"start": start, "length": length}], [firmware]
-
-        best = None  # (length, off, start, firmware)
-
-        limit = min(n - 8, 0x40000)
-        for off in range(0, limit):
+        best = None
+        for off in range(0, len(data) - 8):
             start = struct.unpack('!I', data[off:off+4])[0]
             length = struct.unpack('!I', data[off+4:off+8])[0]
 
-            if length <= 0 or length > n:
+            if length <= 0 or length > len(data):
                 continue
-            if off + 8 + length > n:
+
+            if off + 8 + length > len(data):
                 continue
 
             firmware = data[off+8:off+8+length]
